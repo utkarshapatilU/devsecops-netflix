@@ -8,7 +8,7 @@ spec:
   source:
     repoURL: "https://github.com/utkarshapatilU/devsecops-netflix.git"
     targetRevision: "main"
-    path: "helm/netflix"
+    path:  "app/helm/netflix"git add argocd/netflix-app.yaml
     helm:
       valueFiles:
         - values.yaml
