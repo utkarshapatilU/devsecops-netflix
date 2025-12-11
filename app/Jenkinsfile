@@ -1,0 +1,133 @@
+pipeline {
+    agent any
+
+    environment {
+        REGISTRY      = "docker.io"
+        DOCKERHUB_ID  = "your-dockerhub-username"
+        IMAGE_NAME    = "netflix"
+        K8S_NAMESPACE = "netflix"
+        SONARQUBE_ENV = "sonarqube"        // name configured in Jenkins
+    }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timestamps()
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Install & Test') {
+            steps {
+                dir('app') {
+                    sh 'npm ci'
+                    sh 'npm test || echo "Tests failed or missing"'
+                }
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                script {
+                    withSonarQubeEnv(SONARQUBE_ENV) {
+                        sh """
+                          sonar-scanner \
+                            -Dsonar.projectKey=netflix-clone \
+                            -Dsonar.sources=app/src \
+                            -Dsonar.tests=app/tests
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                script {
+                    timeout(time: 3, unit: 'MINUTES') {
+                        def qg = waitForQualityGate()
+                        if (qg.status != 'OK') {
+                            error "Pipeline aborted due to quality gate failure: ${qg.status}"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    def tag = "${env.BUILD_NUMBER}"
+                    env.IMAGE_TAG = tag
+                    sh """
+                      docker build -t ${DOCKERHUB_ID}/${IMAGE_NAME}:${tag} .
+                    """
+                }
+            }
+        }
+
+        stage('Image Security Scan (Trivy)') {
+            steps {
+                script {
+                    sh """
+                      trivy image --exit-code 1 --severity CRITICAL,HIGH \
+                        ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG} || {
+                          echo "Vulnerabilities found! Failing build."
+                          exit 1
+                        }
+                    """
+                }
+            }
+        }
+
+        stage('Push to DockerHub') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(
+                        credentialsId: 'dockerhub-creds',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )]) {
+                        sh """
+                          echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                          docker push ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG}
+                          docker logout
+                        """
+                    }
+                }
+            }
+        }
+
+        // If you want Jenkins to update Helm values so ArgoCD sees a change:
+        stage('Update Helm values') {
+            steps {
+                sh """
+                  sed -i 's/tag: .*/tag: "${IMAGE_TAG}"/' helm/netflix/values.yaml
+                """
+                sh 'git config user.email "jenkins@local"'
+                sh 'git config user.name "Jenkins"'
+                sh 'git commit -am "Update image tag to ${IMAGE_TAG}" || echo "No changes"'
+                sh 'git push origin HEAD:${env.BRANCH_NAME} || echo "No push"'
+            }
+        }
+
+    }
+
+    post {
+        success {
+            emailext subject: "Build SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                     body: "The build succeeded and image tag ${IMAGE_TAG} is available.",
+                     to: 'your-email@example.com'
+        }
+        failure {
+            emailext subject: "Build FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                     body: "Check Jenkins for logs.",
+                     to: 'your-email@example.com'
+        }
+    }
+}

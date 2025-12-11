@@ -1,0 +1,5 @@
+apiVersion: v2
+name: netflix
+description: Netflix clone app
+version: 0.1.0
+appVersion: "1.0.0"
