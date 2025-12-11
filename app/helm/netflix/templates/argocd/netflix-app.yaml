@@ -6,9 +6,9 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: 'https://github.com/your-user/devsecops-netflix.git'
-    targetRevision: main
-    path: helm/netflix
+    repoURL: "https://github.com/utkarshapatilU/devsecops-netflix.git"
+    targetRevision: "main"
+    path: "helm/netflix"
     helm:
       valueFiles:
         - values.yaml
