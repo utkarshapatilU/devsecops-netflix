@@ -2,17 +2,21 @@
 FROM node:20-alpine AS builder
 WORKDIR /usr/src/app
 
-COPY app/package*.json ./
-RUN npm ci --only=production
+# Install dependencies
+COPY package*.json ./
+RUN npm install
 
-COPY app/. .
-RUN npm test || echo "no tests"   # optional
+# Copy source and run tests (optional)
+COPY . .
+RUN npm test || echo "no tests"
 
-# 2. Runtime stage (smaller image)
+# 2. Runtime stage
 FROM node:20-alpine
 WORKDIR /usr/src/app
 
+# Copy built app from builder
 COPY --from=builder /usr/src/app ./
+
 ENV NODE_ENV=production
 EXPOSE 3000
 

@@ -3,12 +3,9 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.get("/", (req, res) => {
-  res.send("Netflix clone home page");  // replace with your UI
+  res.send("Netflix app deployed via ArgoCD & Kubernetes!");
 });
 
-// simple health endpoint for K8s probes
-app.get("/healthz", (req, res) => res.status(200).send("OK"));
-
 app.listen(port, () => {
-  console.log(`App listening on port ${port}`);
+  console.log(`Server running on port ${port}`);
 });

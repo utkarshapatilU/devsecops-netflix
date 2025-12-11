@@ -1,5 +1,5 @@
 image:
-  repository: your-dockerhub-username/netflix
+  repository: saiee2002/netflix
   tag: "latest"
   pullPolicy: IfNotPresent
 
