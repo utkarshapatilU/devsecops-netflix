@@ -6,7 +6,7 @@ pipeline {
         DOCKERHUB_ID  = "saiee2002"
         IMAGE_NAME    = "netflix"
         K8S_NAMESPACE = "netflix"
-        SONARQUBE_ENV = "sonarqube"        // name configured in Jenkins
+        SONARQUBE_ENV = "sonarqube"
     }
 
     options {
@@ -25,7 +25,7 @@ pipeline {
         stage('Install & Test') {
             steps {
                 dir('app') {
-                    sh 'npm ci'
+                    sh 'npm ci || npm install'
                     sh 'npm test || echo "Tests failed or missing"'
                 }
             }
@@ -33,23 +33,20 @@ pipeline {
 
         stage('SonarQube Analysis') {
             steps {
-                script {
-                    withSonarQubeEnv(SONARQUBE_ENV) {
-                        sh """
-                          sonar-scanner \
-                            -Dsonar.projectKey=netflix-clone \
-                            -Dsonar.sources=app/src \
-                            -Dsonar.tests=app/tests
-                        """
-                    }
+                withSonarQubeEnv("${SONARQUBE_ENV}") {
+                    sh """
+                      sonar-scanner \
+                        -Dsonar.projectKey=netflix-clone \
+                        -Dsonar.sources=app/src
+                    """
                 }
             }
         }
 
         stage('Quality Gate') {
             steps {
-                script {
-                    timeout(time: 3, unit: 'MINUTES') {
+                timeout(time: 3, unit: 'MINUTES') {
+                    script {
                         def qg = waitForQualityGate()
                         if (qg.status != 'OK') {
                             error "Pipeline aborted due to quality gate failure: ${qg.status}"
@@ -62,78 +59,67 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    def tag = "${env.BUILD_NUMBER}"
-                    env.IMAGE_TAG = tag
-                    sh """
-                      docker build -t ${DOCKERHUB_ID}/${IMAGE_NAME}:${tag} .
-                    """
+                    env.IMAGE_TAG = "${env.BUILD_NUMBER}"
+                    sh "docker build -t ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG} ."
                 }
             }
         }
 
         stage('Image Security Scan (Trivy)') {
             steps {
-                script {
-                    sh """
-                      trivy image --exit-code 1 --severity CRITICAL,HIGH \
-                        ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG} || {
-                          echo "Vulnerabilities found! Failing build."
-                          exit 1
-                        }
-                    """
-                }
+                sh """
+                  trivy image --exit-code 1 --severity CRITICAL,HIGH \
+                    ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG}
+                """
             }
         }
 
         stage('Push to DockerHub') {
             steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh """
+                      echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                      docker push ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG}
+                      docker logout
+                    """
+                }
+            }
+        }
+
+        stage('Update Helm values (GitOps)') {
+            steps {
                 script {
+                    sh """
+                      sed -i 's/tag: .*/tag: "${IMAGE_TAG}"/' app/helm/netflix/values.yaml
+                      git config user.email "jenkins@local"
+                      git config user.name "Jenkins"
+                      git add app/helm/netflix/values.yaml
+                      git commit -m "Update image tag to ${IMAGE_TAG}" || echo "No changes"
+                    """
                     withCredentials([usernamePassword(
-                        credentialsId: 'dockerhub-creds',
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
+                        credentialsId: 'github-creds',
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_PAT'
                     )]) {
                         sh """
-                          echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                          docker push ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG}
-                          docker logout
+                          git push https://$GIT_USER:$GIT_PAT@github.com/utkarshapatilU/devsecops-netflix.git HEAD:main
                         """
                     }
                 }
             }
         }
-
-        // If you want Jenkins to update Helm values so ArgoCD sees a change:
-        stage('Update Helm values') {
-  steps {
-    script {
-      sh """
-        sed -i 's/tag: .*/tag: "${IMAGE_TAG}"/' app/helm/netflix/values.yaml
-        git config user.email "jenkins@local"
-        git config user.name "Jenkins"
-        git add app/helm/netflix/values.yaml
-        git commit -m "Update image tag to ${IMAGE_TAG}" || echo "No changes"
-      """
-      withCredentials([usernamePassword(credentialsId: 'github-creds', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PAT')]) {
-        sh """
-          git push https://$GIT_USER:$GIT_PAT@github.com/utkarshapatilU/https://github.com/utkarshapatilU/devsecops-netflix.git HEAD:main
-        """
-      }
     }
-  }
-}
-
 
     post {
         success {
-            emailext subject: "Build SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                     body: "The build succeeded and image tag ${IMAGE_TAG} is available.",
-                     to: 'your-email@example.com'
+            echo "Build SUCCESS: ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG}"
         }
         failure {
-            emailext subject: "Build FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                     body: "Check Jenkins for logs.",
-                     to: 'your-email@example.com'
+            echo "Build FAILED. Check Jenkins logs."
         }
     }
 }
