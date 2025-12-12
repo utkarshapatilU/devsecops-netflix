@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         REGISTRY      = "docker.io"
-        DOCKERHUB_ID  = "your-dockerhub-username"
+        DOCKERHUB_ID  = "saiee2002"
         IMAGE_NAME    = "netflix"
         K8S_NAMESPACE = "netflix"
         SONARQUBE_ENV = "sonarqube"        // name configured in Jenkins
@@ -105,18 +105,24 @@ pipeline {
 
         // If you want Jenkins to update Helm values so ArgoCD sees a change:
         stage('Update Helm values') {
-            steps {
-                sh """
-                  sed -i 's/tag: .*/tag: "${IMAGE_TAG}"/' helm/netflix/values.yaml
-                """
-                sh 'git config user.email "jenkins@local"'
-                sh 'git config user.name "Jenkins"'
-                sh 'git commit -am "Update image tag to ${IMAGE_TAG}" || echo "No changes"'
-                sh 'git push origin HEAD:${env.BRANCH_NAME} || echo "No push"'
-            }
-        }
-
+  steps {
+    script {
+      sh """
+        sed -i 's/tag: .*/tag: "${IMAGE_TAG}"/' app/helm/netflix/values.yaml
+        git config user.email "jenkins@local"
+        git config user.name "Jenkins"
+        git add app/helm/netflix/values.yaml
+        git commit -m "Update image tag to ${IMAGE_TAG}" || echo "No changes"
+      """
+      withCredentials([usernamePassword(credentialsId: 'github-creds', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PAT')]) {
+        sh """
+          git push https://$GIT_USER:$GIT_PAT@github.com/utkarshapatilU/https://github.com/utkarshapatilU/devsecops-netflix.git HEAD:main
+        """
+      }
     }
+  }
+}
+
 
     post {
         success {

@@ -1,6 +1,6 @@
 image:
   repository: saiee2002/netflix
-  tag: "latest"
+  tag: "123"
   pullPolicy: IfNotPresent
 
 replicaCount: 2
