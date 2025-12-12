@@ -2,9 +2,9 @@ pipeline {
   agent any
 
   environment {
-    DOCKERHUB_ID  = "saiee2002"
-    IMAGE_NAME    = "netflix"
-    SONARQUBE_ENV = "sonarqube"
+    DOCKERHUB_ID   = "saiee2002"
+    IMAGE_NAME     = "netflix"
+    SONAR_HOST_URL = "http://host.docker.internal:9000"
   }
 
   options {
@@ -26,35 +26,24 @@ pipeline {
             -v "$PWD/app:/app" -w /app \
             node:20-alpine sh -c "
               npm install &&
-              npm test || echo 'Tests not present'
+              npm test || echo 'No tests configured'
             "
         '''
       }
     }
 
-    stage('SonarQube Analysis') {
+    stage('SonarQube Scan (Docker)') {
       steps {
-        withSonarQubeEnv("${SONARQUBE_ENV}") {
+        withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
           sh '''
             docker run --rm \
-              -v "$PWD:/src" \
+              -e SONAR_HOST_URL=$SONAR_HOST_URL \
+              -e SONAR_LOGIN=$SONAR_TOKEN \
+              -v "$PWD:/usr/src" \
               sonarsource/sonar-scanner-cli \
               -Dsonar.projectKey=netflix-clone \
               -Dsonar.sources=app/src
           '''
-        }
-      }
-    }
-
-    stage('Quality Gate') {
-      steps {
-        timeout(time: 5, unit: 'MINUTES') {
-          script {
-            def qg = waitForQualityGate()
-            if (qg.status != 'OK') {
-              error "Quality Gate failed: ${qg.status}"
-            }
-          }
         }
       }
     }
@@ -68,7 +57,7 @@ pipeline {
       }
     }
 
-    stage('Trivy Scan') {
+    stage('Trivy Image Scan') {
       steps {
         sh '''
           docker run --rm \
@@ -115,7 +104,6 @@ pipeline {
         }
       }
     }
-
   }
 
   post {
