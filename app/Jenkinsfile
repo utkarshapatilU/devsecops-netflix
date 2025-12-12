@@ -116,7 +116,7 @@ pipeline {
       """
       withCredentials([usernamePassword(credentialsId: 'github-creds', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PAT')]) {
         sh """
-          git push https://$GIT_USER:$GIT_PAT@github.com/utkarshapatilU/https://github.com/utkarshapatilU/devsecops-netflix.git HEAD:main
+          git push https://$GIT_USER:$GIT_PAT@github.com/utkarshapatilU/https://github.com/utkarshapatilU/devsecops-netflix/app.git HEAD:main
         """
       }
     }
