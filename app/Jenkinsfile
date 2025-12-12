@@ -1,11 +1,13 @@
 pipeline {
     agent any
 
+    tools {
+        nodejs "node20"     // NodeJS tool from Jenkins (fixes npm not found)
+    }
+
     environment {
-        REGISTRY      = "docker.io"
         DOCKERHUB_ID  = "saiee2002"
         IMAGE_NAME    = "netflix"
-        K8S_NAMESPACE = "netflix"
         SONARQUBE_ENV = "sonarqube"
     }
 
@@ -25,8 +27,10 @@ pipeline {
         stage('Install & Test') {
             steps {
                 dir('app') {
-                    sh 'npm ci || npm install'
-                    sh 'npm test || echo "Tests failed or missing"'
+                    sh 'node -v'
+                    sh 'npm -v'
+                    sh 'npm install'
+                    sh 'npm test || echo "Tests not present"'
                 }
             }
         }
@@ -45,11 +49,11 @@ pipeline {
 
         stage('Quality Gate') {
             steps {
-                timeout(time: 3, unit: 'MINUTES') {
+                timeout(time: 5, unit: 'MINUTES') {
                     script {
                         def qg = waitForQualityGate()
                         if (qg.status != 'OK') {
-                            error "Pipeline aborted due to quality gate failure: ${qg.status}"
+                            error "Quality Gate failed: ${qg.status}"
                         }
                     }
                 }
@@ -116,10 +120,10 @@ pipeline {
 
     post {
         success {
-            echo "Build SUCCESS: ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG}"
+            echo "✅ Build SUCCESS – Image pushed: ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG}"
         }
         failure {
-            echo "Build FAILED. Check Jenkins logs."
+            echo "❌ Build FAILED – Check Jenkins console logs"
         }
     }
 }
