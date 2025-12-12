@@ -1,129 +1,129 @@
 pipeline {
-    agent any
+  agent any
 
-    tools {
-        nodejs "node20"     // NodeJS tool from Jenkins (fixes npm not found)
+  environment {
+    DOCKERHUB_ID  = "saiee2002"
+    IMAGE_NAME    = "netflix"
+    SONARQUBE_ENV = "sonarqube"
+  }
+
+  options {
+    timestamps()
+  }
+
+  stages {
+
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
     }
 
-    environment {
-        DOCKERHUB_ID  = "saiee2002"
-        IMAGE_NAME    = "netflix"
-        SONARQUBE_ENV = "sonarqube"
+    stage('Install & Test (Node via Docker)') {
+      steps {
+        sh '''
+          docker run --rm \
+            -v "$PWD/app:/app" -w /app \
+            node:20-alpine sh -c "
+              npm install &&
+              npm test || echo 'Tests not present'
+            "
+        '''
+      }
     }
 
-    options {
-        buildDiscarder(logRotator(numToKeepStr: '10'))
-        timestamps()
+    stage('SonarQube Analysis') {
+      steps {
+        withSonarQubeEnv("${SONARQUBE_ENV}") {
+          sh '''
+            docker run --rm \
+              -v "$PWD:/src" \
+              sonarsource/sonar-scanner-cli \
+              -Dsonar.projectKey=netflix-clone \
+              -Dsonar.sources=app/src
+          '''
+        }
+      }
     }
 
-    stages {
-
-        stage('Checkout') {
-            steps {
-                checkout scm
+    stage('Quality Gate') {
+      steps {
+        timeout(time: 5, unit: 'MINUTES') {
+          script {
+            def qg = waitForQualityGate()
+            if (qg.status != 'OK') {
+              error "Quality Gate failed: ${qg.status}"
             }
+          }
         }
-
-        stage('Install & Test') {
-            steps {
-                dir('app') {
-                    sh 'node -v'
-                    sh 'npm -v'
-                    sh 'npm install'
-                    sh 'npm test || echo "Tests not present"'
-                }
-            }
-        }
-
-        stage('SonarQube Analysis') {
-            steps {
-                withSonarQubeEnv("${SONARQUBE_ENV}") {
-                    sh """
-                      sonar-scanner \
-                        -Dsonar.projectKey=netflix-clone \
-                        -Dsonar.sources=app/src
-                    """
-                }
-            }
-        }
-
-        stage('Quality Gate') {
-            steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    script {
-                        def qg = waitForQualityGate()
-                        if (qg.status != 'OK') {
-                            error "Quality Gate failed: ${qg.status}"
-                        }
-                    }
-                }
-            }
-        }
-
-        stage('Build Docker Image') {
-            steps {
-                script {
-                    env.IMAGE_TAG = "${env.BUILD_NUMBER}"
-                    sh "docker build -t ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG} ."
-                }
-            }
-        }
-
-        stage('Image Security Scan (Trivy)') {
-            steps {
-                sh """
-                  trivy image --exit-code 1 --severity CRITICAL,HIGH \
-                    ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG}
-                """
-            }
-        }
-
-        stage('Push to DockerHub') {
-            steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-creds',
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PASS'
-                )]) {
-                    sh """
-                      echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                      docker push ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG}
-                      docker logout
-                    """
-                }
-            }
-        }
-
-        stage('Update Helm values (GitOps)') {
-            steps {
-                script {
-                    sh """
-                      sed -i 's/tag: .*/tag: "${IMAGE_TAG}"/' app/helm/netflix/values.yaml
-                      git config user.email "jenkins@local"
-                      git config user.name "Jenkins"
-                      git add app/helm/netflix/values.yaml
-                      git commit -m "Update image tag to ${IMAGE_TAG}" || echo "No changes"
-                    """
-                    withCredentials([usernamePassword(
-                        credentialsId: 'github-creds',
-                        usernameVariable: 'GIT_USER',
-                        passwordVariable: 'GIT_PAT'
-                    )]) {
-                        sh """
-                          git push https://$GIT_USER:$GIT_PAT@github.com/utkarshapatilU/devsecops-netflix.git HEAD:main
-                        """
-                    }
-                }
-            }
-        }
+      }
     }
 
-    post {
-        success {
-            echo "✅ Build SUCCESS – Image pushed: ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG}"
+    stage('Build Docker Image') {
+      steps {
+        script {
+          env.IMAGE_TAG = "${env.BUILD_NUMBER}"
+          sh "docker build -t ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG} ."
         }
-        failure {
-            echo "❌ Build FAILED – Check Jenkins console logs"
-        }
+      }
     }
+
+    stage('Trivy Scan') {
+      steps {
+        sh '''
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG}
+        '''
+      }
+    }
+
+    stage('Push Docker Image') {
+      steps {
+        withCredentials([usernamePassword(
+          credentialsId: 'dockerhub-creds',
+          usernameVariable: 'DOCKER_USER',
+          passwordVariable: 'DOCKER_PASS'
+        )]) {
+          sh '''
+            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+            docker push ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG}
+            docker logout
+          '''
+        }
+      }
+    }
+
+    stage('GitOps – Update Helm values') {
+      steps {
+        withCredentials([usernamePassword(
+          credentialsId: 'github-creds',
+          usernameVariable: 'GIT_USER',
+          passwordVariable: 'GIT_PAT'
+        )]) {
+          sh '''
+            sed -i "s/tag:.*/tag: ${IMAGE_TAG}/" app/helm/netflix/values.yaml
+            git config user.email "jenkins@local"
+            git config user.name "Jenkins"
+            git add app/helm/netflix/values.yaml
+            git commit -m "Update image tag ${IMAGE_TAG}" || echo "No changes"
+            git push https://$GIT_USER:$GIT_PAT@github.com/utkarshapatilU/devsecops-netflix.git main
+          '''
+        }
+      }
+    }
+
+  }
+
+  post {
+    success {
+      echo "✅ CI/CD SUCCESS – Image ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG}"
+    }
+    failure {
+      echo "❌ CI/CD FAILED – check logs"
+    }
+  }
 }
