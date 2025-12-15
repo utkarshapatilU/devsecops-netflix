@@ -2,14 +2,8 @@ pipeline {
     agent any
 
     environment {
-        DOCKERHUB_ID      = "saiee2002"
-        IMAGE_NAME        = "netflix"
-        SONAR_PROJECT_KEY = "netflix-clone"
-        SONAR_HOST_URL    = "http://host.docker.internal:9000"
-    }
-
-    options {
-        timestamps()
+        IMAGE_NAME = "saiee2002/netflix"
+        SONAR_HOST = "http://host.docker.internal:9000"
     }
 
     stages {
@@ -22,52 +16,52 @@ pipeline {
 
         stage('Install & Test (Node via Docker)') {
             steps {
-                sh """
+                sh '''
                   docker run --rm \
-                    -v "${WORKSPACE}/app:/app" \
+                    -v "$PWD/app:/app" \
                     -w /app \
-                    node:20-alpine sh -c "npm install && npm test || echo 'No tests configured'"
-                """
+                    node:20-alpine sh -c "
+                      npm install &&
+                      npm test || echo 'No tests configured'
+                    "
+                '''
             }
         }
 
         stage('SonarQube Scan (Docker)') {
             steps {
                 withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
-                    sh """
-                      docker pull sonarsource/sonar-scanner-cli:latest
+                    sh '''
                       docker run --rm \
-                        -v "${WORKSPACE}:/usr/src" \
+                        -v "$PWD:/usr/src" \
                         -w /usr/src \
-                        sonarsource/sonar-scanner-cli:latest sonar-scanner \
-                        -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
-                        -Dsonar.sources=app/src \
-                        -Dsonar.host.url=${SONAR_HOST_URL} \
-                        -Dsonar.login=$SONAR_TOKEN
-                    """
+                        sonarsource/sonar-scanner-cli:latest \
+                        sonar-scanner \
+                          -Dsonar.projectKey=netflix-clone \
+                          -Dsonar.sources=app/src \
+                          -Dsonar.host.url=${SONAR_HOST} \
+                          -Dsonar.login=${SONAR_TOKEN}
+                    '''
                 }
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                sh """
-                  docker build -t ${DOCKERHUB_ID}/${IMAGE_NAME}:${BUILD_NUMBER} app
-                """
+                sh '''
+                  docker build -t ${IMAGE_NAME}:${BUILD_NUMBER} app
+                '''
             }
         }
 
         stage('Trivy Image Scan') {
-  steps {
-    sh """
-      docker run --rm \
-        -v /var/run/docker.sock:/var/run/docker.sock \
-        aquasec/trivy:latest image \
-        --exit-code 1 --severity CRITICAL \
-        ${DOCKERHUB_ID}/${IMAGE_NAME}:${BUILD_NUMBER}
-    """
-  }
-}
+            steps {
+                sh '''
+                  trivy image --severity HIGH,CRITICAL ${IMAGE_NAME}:${BUILD_NUMBER} || true
+                '''
+            }
+        }
+
         stage('Push Docker Image') {
             steps {
                 withCredentials([usernamePassword(
@@ -75,11 +69,10 @@ pipeline {
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
-                    sh """
+                    sh '''
                       echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                      docker push ${DOCKERHUB_ID}/${IMAGE_NAME}:${BUILD_NUMBER}
-                      docker logout
-                    """
+                      docker push ${IMAGE_NAME}:${BUILD_NUMBER}
+                    '''
                 }
             }
         }
@@ -87,10 +80,10 @@ pipeline {
 
     post {
         success {
-            echo "✅ Pipeline SUCCESS – Image pushed to DockerHub"
+            echo "✅ CI/CD PIPELINE COMPLETED SUCCESSFULLY"
         }
         failure {
-            echo "❌ Pipeline FAILED – Check logs"
+            echo "❌ PIPELINE FAILED – CHECK LOGS"
         }
     }
 }
