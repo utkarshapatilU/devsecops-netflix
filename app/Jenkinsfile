@@ -16,15 +16,15 @@ pipeline {
 
         stage('Install & Test (Node via Docker)') {
             steps {
-                sh '''
-                  docker run --rm \
-                    -v "$PWD/app:/app" \
-                    -w /app \
-                    node:20-alpine sh -c "
-                      npm install &&
-                      npm test || echo 'No tests configured'
-                    "
-                '''
+                dir('app') {
+                    sh '''
+                      docker run --rm \
+                        -v "$PWD:/app" \
+                        -w /app \
+                        node:20-alpine \
+                        sh -c "npm install && npm test || echo 'No tests configured'"
+                    '''
+                }
             }
         }
 
@@ -37,10 +37,10 @@ pipeline {
                         -w /usr/src \
                         sonarsource/sonar-scanner-cli:latest \
                         sonar-scanner \
-                          -Dsonar.projectKey=netflix-clone \
-                          -Dsonar.sources=app/src \
-                          -Dsonar.host.url=${SONAR_HOST} \
-                          -Dsonar.login=${SONAR_TOKEN}
+                        -Dsonar.projectKey=netflix-clone \
+                        -Dsonar.sources=app/src \
+                        -Dsonar.host.url=$SONAR_HOST \
+                        -Dsonar.login=$SONAR_TOKEN
                     '''
                 }
             }
@@ -49,7 +49,7 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 sh '''
-                  docker build -t ${IMAGE_NAME}:${BUILD_NUMBER} app
+                  docker build -t $IMAGE_NAME:$BUILD_NUMBER -f app/Dockerfile app
                 '''
             }
         }
@@ -57,7 +57,7 @@ pipeline {
         stage('Trivy Image Scan') {
             steps {
                 sh '''
-                  trivy image --severity HIGH,CRITICAL ${IMAGE_NAME}:${BUILD_NUMBER} || true
+                  trivy image --severity HIGH,CRITICAL --exit-code 0 $IMAGE_NAME:$BUILD_NUMBER
                 '''
             }
         }
@@ -71,7 +71,7 @@ pipeline {
                 )]) {
                     sh '''
                       echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                      docker push ${IMAGE_NAME}:${BUILD_NUMBER}
+                      docker push $IMAGE_NAME:$BUILD_NUMBER
                     '''
                 }
             }
@@ -80,10 +80,10 @@ pipeline {
 
     post {
         success {
-            echo "✅ CI/CD PIPELINE COMPLETED SUCCESSFULLY"
+            echo "✅ CI/CD Pipeline COMPLETED SUCCESSFULLY"
         }
         failure {
-            echo "❌ PIPELINE FAILED – CHECK LOGS"
+            echo "❌ CI/CD Pipeline FAILED – check logs"
         }
     }
 }
