@@ -2,13 +2,15 @@ pipeline {
   agent any
 
   environment {
-    DOCKERHUB_ID   = "saiee2002"
-    IMAGE_NAME     = "netflix"
+    DOCKERHUB_ID  = "saiee2002"
+    IMAGE_NAME    = "netflix"
     SONAR_HOST_URL = "http://host.docker.internal:9000"
+    SONAR_PROJECT_KEY = "netflix-clone"
   }
 
   options {
     timestamps()
+    buildDiscarder(logRotator(numToKeepStr: '10'))
   }
 
   stages {
@@ -21,113 +23,65 @@ pipeline {
 
     stage('Install & Test (Node via Docker)') {
       steps {
-        sh '''
-          docker run --rm \
-            -v "$PWD/app:/app" -w /app \
-            node:20-alpine sh -c "
-              npm install &&
-              npm test || echo 'No tests configured'
-            "
-        '''
+        sh """
+          docker run --rm ^
+            -v "${WORKSPACE}/app:/app" ^
+            -w /app ^
+            node:20-alpine sh -c "npm install && npm test || echo 'No tests configured'"
+        """
       }
     }
 
-//     stage('SonarQube Scan (Docker)') {
-//   steps {
-//     withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
-//       sh '''
-//         docker pull sonarsource/sonar-scanner-cli:latest
-
-//         docker run --rm \
-//         -v "$PWD:/usr/src" \
-//         -w /usr/src \
-//         sonarsource/sonar-scanner-cli:latest \
-//         sonar-scanner \
-//         -Dsonar.projectKey=netflix-clone \
-//         -Dsonar.sources=app/src \
-//         -Dsonar.host.url=http://host.docker.internal:9000 \
-//         -Dsonar.login=$SONAR_TOKEN
-//       '''
-//     }
-//   }
-// }
-node {
-  stage('SCM') {
-    checkout scm
-  }
-  stage('SonarQube Analysis') {
-    def scannerHome = tool 'SonarScanner';
-    withSonarQubeEnv() {
-      sh "${scannerHome}/bin/sonar-scanner"
+    stage('SonarQube Scan (Docker)') {
+      steps {
+        withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+          sh """
+            docker pull sonarsource/sonar-scanner-cli:latest
+            docker run --rm ^
+              -v "${WORKSPACE}:/usr/src" ^
+              -w /usr/src ^
+              sonarsource/sonar-scanner-cli:latest sonar-scanner ^
+              -Dsonar.projectKey=${SONAR_PROJECT_KEY} ^
+              -Dsonar.sources=app/src ^
+              -Dsonar.host.url=${SONAR_HOST_URL} ^
+              -Dsonar.login=$SONAR_TOKEN
+          """
+        }
+      }
     }
-  }
-}
-
 
     stage('Build Docker Image') {
       steps {
-        script {
-          env.IMAGE_TAG = "${env.BUILD_NUMBER}"
-          sh "docker build -t ${DOCKERHUB_ID}/${IMAGE_NAME}:${tag} app"
-        }
+        sh """
+          docker build -t ${DOCKERHUB_ID}/${IMAGE_NAME}:${BUILD_NUMBER} app
+        """
       }
     }
 
     stage('Trivy Image Scan') {
       steps {
-        sh '''
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:latest image \
-            --severity CRITICAL,HIGH \
-            --exit-code 1 \
-            ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG}
-        '''
+        sh """
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest ^
+            image --exit-code 1 --severity CRITICAL,HIGH ${DOCKERHUB_ID}/${IMAGE_NAME}:${BUILD_NUMBER}
+        """
       }
     }
 
     stage('Push Docker Image') {
       steps {
-        withCredentials([usernamePassword(
-          credentialsId: 'dockerhub-creds',
-          usernameVariable: 'DOCKER_USER',
-          passwordVariable: 'DOCKER_PASS'
-        )]) {
-          sh '''
-            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-            docker push ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG}
+        withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+          sh """
+            echo %DOCKER_PASS% | docker login -u %DOCKER_USER% --password-stdin
+            docker push ${DOCKERHUB_ID}/${IMAGE_NAME}:${BUILD_NUMBER}
             docker logout
-          '''
-        }
-      }
-    }
-
-    stage('GitOps – Update Helm values') {
-      steps {
-        withCredentials([usernamePassword(
-          credentialsId: 'github-creds',
-          usernameVariable: 'GIT_USER',
-          passwordVariable: 'GIT_PAT'
-        )]) {
-          sh '''
-            sed -i "s/tag:.*/tag: ${IMAGE_TAG}/" app/helm/netflix/values.yaml
-            git config user.email "jenkins@local"
-            git config user.name "Jenkins"
-            git add app/helm/netflix/values.yaml
-            git commit -m "Update image tag ${IMAGE_TAG}" || echo "No changes"
-            git push https://$GIT_USER:$GIT_PAT@github.com/utkarshapatilU/devsecops-netflix.git main
-          '''
+          """
         }
       }
     }
   }
 
   post {
-    success {
-      echo "✅ CI/CD SUCCESS – Image ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG}"
-    }
-    failure {
-      echo "❌ CI/CD FAILED – check logs"
-    }
+    success { echo "✅ Pipeline SUCCESS" }
+    failure { echo "❌ Pipeline FAILED – check logs" }
   }
 }
