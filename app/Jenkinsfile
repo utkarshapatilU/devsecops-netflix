@@ -1,96 +1,97 @@
 pipeline {
-  agent any
+    agent any
 
-  environment {
-    DOCKERHUB_ID  = "saiee2002"
-    IMAGE_NAME    = "netflix"
-    SONAR_HOST_URL = "http://host.docker.internal:9000"
-    SONAR_PROJECT_KEY = "netflix-clone"
-  }
-
-  options {
-    timestamps()
-    buildDiscarder(logRotator(numToKeepStr: '10'))
-  }
-
-  stages {
-
-    stage('Checkout') {
-      steps { checkout scm }
+    environment {
+        DOCKERHUB_ID      = "saiee2002"
+        IMAGE_NAME        = "netflix"
+        SONAR_PROJECT_KEY = "netflix-clone"
+        SONAR_HOST_URL    = "http://host.docker.internal:9000"
     }
 
-    stage('Install & Test (Node via Docker)') {
-  steps {
-    sh """
-      docker run --rm \
-        -v "${WORKSPACE}/app:/app" \
-        -w /app \
-        node:20-alpine sh -c "npm install && npm test || echo 'No tests configured'"
-    """
-  }
-}
-
-
-    stage('SonarQube Scan (Docker)') {
-  steps {
-    withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
-      sh """
-        docker pull sonarsource/sonar-scanner-cli:latest
-        docker run --rm \
-          -v "${WORKSPACE}:/usr/src" \
-          -w /usr/src \
-          sonarsource/sonar-scanner-cli:latest sonar-scanner \
-          -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
-          -Dsonar.sources=app/src \
-          -Dsonar.host.url=${SONAR_HOST_URL} \
-          -Dsonar.login=$SONAR_TOKEN
-      """
+    options {
+        timestamps()
     }
-  }
-}
 
+    stages {
 
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
 
-    stage('Build Docker Image') {
-  steps {
-    sh """
-      docker build -t ${DOCKERHUB_ID}/${IMAGE_NAME}:${BUILD_NUMBER} app
-    """
-  }
-}
+        stage('Install & Test (Node via Docker)') {
+            steps {
+                sh """
+                  docker run --rm \
+                    -v "${WORKSPACE}/app:/app" \
+                    -w /app \
+                    node:20-alpine sh -c "npm install && npm test || echo 'No tests configured'"
+                """
+            }
+        }
 
+        stage('SonarQube Scan (Docker)') {
+            steps {
+                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                    sh """
+                      docker pull sonarsource/sonar-scanner-cli:latest
+                      docker run --rm \
+                        -v "${WORKSPACE}:/usr/src" \
+                        -w /usr/src \
+                        sonarsource/sonar-scanner-cli:latest sonar-scanner \
+                        -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                        -Dsonar.sources=app/src \
+                        -Dsonar.host.url=${SONAR_HOST_URL} \
+                        -Dsonar.login=$SONAR_TOKEN
+                    """
+                }
+            }
+        }
 
-    stage('Trivy Image Scan') {
-  steps {
-    sh """
-      docker run --rm \
-        -v /var/run/docker.sock:/var/run/docker.sock \
-        aquasec/trivy:latest image \
-        --exit-code 1 --severity CRITICAL,HIGH \
-        ${DOCKERHUB_ID}/${IMAGE_NAME}:${BUILD_NUMBER}
-    """
-  }
-}
+        stage('Build Docker Image') {
+            steps {
+                sh """
+                  docker build -t ${DOCKERHUB_ID}/${IMAGE_NAME}:${BUILD_NUMBER} app
+                """
+            }
+        }
 
-    stage('Push Docker Image') {
-  steps {
-    withCredentials([usernamePassword(credentialsId: 'dockerhub-creds',
-      usernameVariable: 'DOCKER_USER',
-      passwordVariable: 'DOCKER_PASS')]) {
+        stage('Trivy Image Scan') {
+            steps {
+                sh """
+                  docker run --rm \
+                    -v /var/run/docker.sock:/var/run/docker.sock \
+                    aquasec/trivy:latest image \
+                    --exit-code 1 --severity CRITICAL,HIGH \
+                    ${DOCKERHUB_ID}/${IMAGE_NAME}:${BUILD_NUMBER}
+                """
+            }
+        }
 
-      sh """
-        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-        docker push ${DOCKERHUB_ID}/${IMAGE_NAME}:${BUILD_NUMBER}
-        docker logout
-      """
+        stage('Push Docker Image') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh """
+                      echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                      docker push ${DOCKERHUB_ID}/${IMAGE_NAME}:${BUILD_NUMBER}
+                      docker logout
+                    """
+                }
+            }
+        }
     }
-  }
-}
 
-
-  post {
-    success { echo "✅ Pipeline SUCCESS" }
-    failure { echo "❌ Pipeline FAILED – check logs" }
-  }
-}
+    post {
+        success {
+            echo "✅ Pipeline SUCCESS – Image pushed to DockerHub"
+        }
+        failure {
+            echo "❌ Pipeline FAILED – Check logs"
+        }
+    }
 }
