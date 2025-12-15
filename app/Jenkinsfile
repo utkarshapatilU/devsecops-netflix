@@ -32,33 +32,43 @@ pipeline {
       }
     }
 
-    stage('SonarQube Scan (Docker)') {
-  steps {
-    withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
-      sh '''
-        docker pull sonarsource/sonar-scanner-cli:latest
+//     stage('SonarQube Scan (Docker)') {
+//   steps {
+//     withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+//       sh '''
+//         docker pull sonarsource/sonar-scanner-cli:latest
 
-        docker run --rm \
-        -v "$PWD:/usr/src" \
-        -w /usr/src \
-        sonarsource/sonar-scanner-cli:latest \
-        sonar-scanner \
-        -Dsonar.projectKey=netflix-clone \
-        -Dsonar.sources=app/src \
-        -Dsonar.host.url=http://host.docker.internal:9000 \
-        -Dsonar.login=$SONAR_TOKEN
-      '''
+//         docker run --rm \
+//         -v "$PWD:/usr/src" \
+//         -w /usr/src \
+//         sonarsource/sonar-scanner-cli:latest \
+//         sonar-scanner \
+//         -Dsonar.projectKey=netflix-clone \
+//         -Dsonar.sources=app/src \
+//         -Dsonar.host.url=http://host.docker.internal:9000 \
+//         -Dsonar.login=$SONAR_TOKEN
+//       '''
+//     }
+//   }
+// }
+node {
+  stage('SCM') {
+    checkout scm
+  }
+  stage('SonarQube Analysis') {
+    def scannerHome = tool 'SonarScanner';
+    withSonarQubeEnv() {
+      sh "${scannerHome}/bin/sonar-scanner"
     }
   }
 }
-
 
 
     stage('Build Docker Image') {
       steps {
         script {
           env.IMAGE_TAG = "${env.BUILD_NUMBER}"
-          sh "docker build -t ${DOCKERHUB_ID}/${IMAGE_NAME}:${IMAGE_TAG} ."
+          sh "docker build -t ${DOCKERHUB_ID}/${IMAGE_NAME}:${tag} app"
         }
       }
     }
